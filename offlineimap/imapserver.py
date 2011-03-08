@@ -16,6 +16,8 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
+# make 'with' work in python 2.5
+from __future__ import with_statement
 from offlineimap import imaplibutil, imaputil, threadutil, OfflineImapError
 from offlineimap.ui import getglobalui
 from threading import Lock, BoundedSemaphore, Thread, Event, currentThread
@@ -72,14 +74,17 @@ class IMAPServer:
         self.delim = None
         self.root = None
         self.maxconnections = repos.getmaxconnections()
-        self.availableconnections = []
-        self.assignedconnections = []
-        self.lastowner = {}
+        self.avail_conn = {}
+        """containing imapobj that are available for reuse
+           {lastthread_id: imapobj, ...}"""
+        self.assigned_conn = []
+        """list of imapobj that are currently in use"""
         self.maxconns_left = BoundedSemaphore(self.maxconnections)
         """Semaphore restricting the number of possible connections"""
         self.connectionlock = Lock()
         """lock protecting us from concurrently modifying
-        self.availableconnections or self.assignedconnections"""
+        self.avail_conn or self.assigned_conn. It also protects the
+        self.gss* vars."""
         self.reference = repos.getreference()
         self.idlefolders = repos.getidlefolders()
         self.gss_step = self.GSS_STATE_STEP
@@ -111,21 +116,19 @@ class IMAPServer:
         or more calls to acquireconnection."""
         return self.root
 
-
     def releaseconnection(self, connection, drop_conn=False):
         """Releases a connection, returning it to the pool.
 
         :param drop_conn: If True, the connection will be released and
            not be reused. This can be used to indicate broken connections."""
-        self.connectionlock.acquire()
-        self.assignedconnections.remove(connection)
-        # Don't reuse broken connections
-        if connection.Terminate or drop_conn:
-            connection.logout()
-        else:
-            self.availableconnections.append(connection)
-        self.connectionlock.release()
-        self.maxconns_left.release()
+        with self.connectionlock:
+            self.assigned_conn.remove(connection)
+            # Don't reuse broken connections
+            if connection.Terminate or drop_conn:
+                connection.logout()
+            else:
+                self.avail_conn.append(connection)
+        self.maxconns_left.release() # allow another conn to be made
 
     def md5handler(self, response):
         challenge = response.strip()
@@ -173,30 +176,21 @@ class IMAPServer:
  
         :returns: imapobj if a connection can be reused or None if there
                   are none available."""
-        if len(self.availableconnections) == 0: # None is available
-            return None
+        with self.connectionlock:
+            #lock protecting us from concurrently modifying
+            #self.avail_conn or self.assigned_conn
+            if len(self.avail_conn) == 0: # None is available
+                return None
 
-        self.connectionlock.acquire()
-        """lock protecting us from concurrently modifying
-        self.availableconnections or self.assignedconnections"""
+            # Try to find one that previously belonged to this thread
+            threadid = get_ident()
+            if threadid in self.avail_conn:
+                imapobj = self.avail_conn.pop(threadid)
+            # Otherwise get a random one
+            if not imapobj:
+                oldthreadid, imapobj = self.avail_conn.popitem()
 
-        # Try to find one that previously belonged to this thread
-        # as an optimization.  Start from the back since that's where
-        # they're popped on.
-        for i in range(len(self.availableconnections) - 1, -1, -1):
-            tryobj = self.availableconnections[i]
-            if self.lastowner[tryobj] == get_ident():
-                imapobj = tryobj
-                del(self.availableconnections[i])
-                break
-
-        if not imapobj:
-            imapobj = self.availableconnections[0]
-            del(self.availableconnections[0])
-        self.assignedconnections.append(imapobj)
-        self.lastowner[imapobj] = get_ident()
-        
-        self.connectionlock.release()
+            self.assigned_conn.append(imapobj)
         return imapobj
 
     def acquireconnection(self):
@@ -257,7 +251,8 @@ class IMAPServer:
                                 self.gss_step = self.GSS_STATE_STEP
                                 #if we do self.password = None then the next attempt cannot try...
                                 #self.password = None
-                            self.connectionlock.release()
+                            finally:
+                                self.connectionlock.release()
 
                         if not self.gssapi:
                             if 'STARTTLS' in imapobj.capabilities and not\
@@ -308,10 +303,7 @@ class IMAPServer:
                 self.delim = imaputil.dequote(self.delim)
                 self.root = imaputil.dequote(self.root)
 
-            self.connectionlock.acquire()
-            self.assignedconnections.append(imapobj)
-            self.lastowner[imapobj] = get_ident()
-            self.connectionlock.release()
+            self.assigned_conn.append(imapobj)
             return imapobj
         except Exception, e:
             """If we are here then we did not succeed in getting a
@@ -378,18 +370,17 @@ class IMAPServer:
     def close(self):
         # Make sure I own all the semaphores.  Let the threads finish
         # their stuff.  This is a blocking method.
-        self.connectionlock.acquire()
-        threadutil.semaphorereset(self.maxconns_left, self.maxconnections)
-        for imapobj in self.assignedconnections + self.availableconnections:
-            imapobj.logout()
-        self.assignedconnections = []
-        self.availableconnections = []
-        self.lastowner = {}
-        # reset kerberos state
-        self.gss_step = self.GSS_STATE_STEP
-        self.gss_vc = None
-        self.gssapi = False
-        self.connectionlock.release()
+        with self.connectionlock:
+            threadutil.semaphorereset(self.maxconns_left, self.maxconnections)
+            #log out of both idle and assigned connections.
+            for imapobj in self.assigned_conn + self.avail_conn.values():
+                imapobj.logout()
+            self.assigned_conn = []
+            self.avail_conn = {}
+            # reset kerberos state
+            self.gss_step = self.GSS_STATE_STEP
+            self.gss_vc = None
+            self.gssapi = False
 
     def keepalive(self, timeout, event):
         """Sends a NOOP to each connection recorded.   It will wait a maximum
@@ -403,12 +394,9 @@ class IMAPServer:
             if event.isSet():
                 self.ui.debug('imap', 'keepalive: event is set; exiting')
                 return
-            self.ui.debug('imap', 'keepalive: acquiring connectionlock')
-            self.connectionlock.acquire()
-            numconnections = len(self.assignedconnections) + \
-                             len(self.availableconnections)
-            self.connectionlock.release()
-            self.ui.debug('imap', 'keepalive: connectionlock released')
+            with self.connectionlock:
+                numconnections = len(self.assigned_conn) + \
+                    len(self.avail_conn)
             threads = []
         
             for i in range(numconnections):
