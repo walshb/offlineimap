@@ -75,8 +75,11 @@ class IMAPServer:
         self.availableconnections = []
         self.assignedconnections = []
         self.lastowner = {}
-        self.semaphore = BoundedSemaphore(self.maxconnections)
+        self.maxconns_left = BoundedSemaphore(self.maxconnections)
+        """Semaphore restricting the number of possible connections"""
         self.connectionlock = Lock()
+        """lock protecting us from concurrently modifying
+        self.availableconnections or self.assignedconnections"""
         self.reference = repos.getreference()
         self.idlefolders = repos.getidlefolders()
         self.gss_step = self.GSS_STATE_STEP
@@ -122,7 +125,7 @@ class IMAPServer:
         else:
             self.availableconnections.append(connection)
         self.connectionlock.release()
-        self.semaphore.release()
+        self.maxconns_left.release()
 
     def md5handler(self, response):
         challenge = response.strip()
@@ -164,42 +167,52 @@ class IMAPServer:
             response = ''
         return base64.b64decode(response)
 
+
+    def get_available_connection(self):
+        """Return an imapobj of an already existing connection
+ 
+        :returns: imapobj if a connection can be reused or None if there
+                  are none available."""
+        if len(self.availableconnections) == 0: # None is available
+            return None
+
+        self.connectionlock.acquire()
+        """lock protecting us from concurrently modifying
+        self.availableconnections or self.assignedconnections"""
+
+        # Try to find one that previously belonged to this thread
+        # as an optimization.  Start from the back since that's where
+        # they're popped on.
+        for i in range(len(self.availableconnections) - 1, -1, -1):
+            tryobj = self.availableconnections[i]
+            if self.lastowner[tryobj] == get_ident():
+                imapobj = tryobj
+                del(self.availableconnections[i])
+                break
+
+        if not imapobj:
+            imapobj = self.availableconnections[0]
+            del(self.availableconnections[0])
+        self.assignedconnections.append(imapobj)
+        self.lastowner[imapobj] = get_ident()
+        
+        self.connectionlock.release()
+        return imapobj
+
     def acquireconnection(self):
         """Fetches a connection from the pool, making sure to create a new one
         if needed, to obey the maximum connection limits, etc.
         Opens a connection to the server and returns an appropriate
-        object."""
-
-        self.semaphore.acquire()
-        self.connectionlock.acquire()
-        imapobj = None
-
-        if len(self.availableconnections): # One is available.
-            # Try to find one that previously belonged to this thread
-            # as an optimization.  Start from the back since that's where
-            # they're popped on.
-            imapobj = None
-            for i in range(len(self.availableconnections) - 1, -1, -1):
-                tryobj = self.availableconnections[i]
-                if self.lastowner[tryobj] == get_ident():
-                    imapobj = tryobj
-                    del(self.availableconnections[i])
-                    break
-            if not imapobj:
-                imapobj = self.availableconnections[0]
-                del(self.availableconnections[0])
-            self.assignedconnections.append(imapobj)
-            self.lastowner[imapobj] = get_ident()
-            self.connectionlock.release()
-            return imapobj
-        
-        self.connectionlock.release()   # Release until need to modify data
-
-        """ Must be careful here that if we fail we should bail out gracefully
-        and release locks / threads so that the next attempt can try...
-        """
-        success = 0
+        imapobj object."""
+        # See if we can get another connection, block if all are in use.
+        self.maxconns_left.acquire()
         try:
+            # first try to recycle an existing connection
+            imapobj = self.get_available_connection()
+            if imapobj:
+                return imapobj
+
+            success = False
             while not success:
                 # Generate a new connection.
                 if self.tunnel:
@@ -304,7 +317,7 @@ class IMAPServer:
             """If we are here then we did not succeed in getting a
             connection - we should clean up and then re-raise the
             error..."""
-            self.semaphore.release()
+            self.maxconns_left.release()
 
             if(self.connectionlock.locked()):
                 self.connectionlock.release()
@@ -359,14 +372,14 @@ class IMAPServer:
         to copy messages, then have them all wait for 3 available connections.
         It's OK if we have maxconnections + 1 or 2 threads, which is what
         this will help us do."""
-        self.semaphore.acquire()
-        self.semaphore.release()
+        self.maxconns_left.acquire()
+        self.maxconns_left.release()
 
     def close(self):
         # Make sure I own all the semaphores.  Let the threads finish
         # their stuff.  This is a blocking method.
         self.connectionlock.acquire()
-        threadutil.semaphorereset(self.semaphore, self.maxconnections)
+        threadutil.semaphorereset(self.maxconns_left, self.maxconnections)
         for imapobj in self.assignedconnections + self.availableconnections:
             imapobj.logout()
         self.assignedconnections = []
