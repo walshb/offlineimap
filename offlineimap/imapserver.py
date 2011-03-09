@@ -130,14 +130,9 @@ class IMAPServer:
                 self.avail_conn.append(connection)
         self.maxconns_left.release() # allow another conn to be made
 
-    def md5handler(self, response):
-        challenge = response.strip()
-        self.ui.debug('imap', 'md5handler: got challenge %s' % challenge)
-
-        passwd = self.getpassword()
-        retval = self.username + ' ' + hmac.new(passwd, challenge).hexdigest()
-        self.ui.debug('imap', 'md5handler: returning %s' % retval)
-        return retval
+    def login_cram_md5(self, imapobj):
+        self.ui.debug('imap', 'Attempting CRAM-MD5 authentication')
+        imapobj.login_cram_md5(self.username, self.getpassword())
 
     def plainauth(self, imapobj):
         self.ui.debug('imap', 'Attempting plain authentication')
@@ -207,6 +202,7 @@ class IMAPServer:
                 return imapobj
 
             success = False
+            #Repeat in case we got a wrong password
             while not success:
                 # Generate a new connection.
                 if self.tunnel:    # 1)build up pre-auth tunnel?
@@ -257,35 +253,28 @@ class IMAPServer:
                     success = True
                     break
 
-                if 'AUTH=CRAM-MD5' in imapobj.capabilities:
-                    self.ui.debug('imap',
-                                  'Attempting CRAM-MD5 authentication')
-                    try:
-                        imapobj.authenticate('CRAM-MD5', self.md5handler)
-                    except imapobj.error, val:
-                        # log but ignore failures, continue to plainauth
-                        self.ui.debug('imap',
-                                  'CRAM-MD5 authentication failed')
-                    else:
-                        success = True
-                        break
-
-                try: # Finally plainauth as 'last resort
-                    # Use plaintext login, unless LOGINDISABLED (RFC2595)
-                    if 'LOGINDISABLED' in imapobj.capabilities:
-                        raise OfflineImapError("Plaintext login "
-                              "disabled by server. Need to use SSL?",
+                # cram-md5 or plainauth?
+                authmethod = self.login_cram_md5 if \
+                    'AUTH=CRAM-MD5' in imapobj.capabilities else self.plainauth
+                try:
+                    # plaintext login forbidden by LOGINDISABLED (RFC2595)?
+                    if 'LOGINDISABLED' in imapobj.capabilities and \
+                            authmethod == self.plainauth:
+                        raise OfflineImapError("Plaintext login disabled by "
+                                               "server. Need to use SSL?",
                                                OfflineImapError.ERROR.REPO)
-                    self.plainauth(imapobj)
+                    authmethod(imapobj) # actual login
                 except imapobj.error as e:
                     self.passworderror = str(e)
-                    raise #bail out if plaintext auth fails
+                    self.ui.warn('imap',
+                                 'Login failed: %s' % str(e))
+                    raise
                 success = True
 
             # Finished authenticating to imapobj here!
             self.goodpassword = self.password
 
-            #Retrieve self.delim and self.root if necessary
+            #Authenticated. Retrieve self.delim and self.root if necessary
             if self.delim == None:
                 listres = imapobj.list(self.reference, '""')[1]
                 if listres == [None] or listres == None:
