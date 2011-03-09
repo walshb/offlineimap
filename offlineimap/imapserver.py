@@ -89,7 +89,6 @@ class IMAPServer:
         self.idlefolders = repos.getidlefolders()
         self.gss_step = self.GSS_STATE_STEP
         self.gss_vc = None
-        self.gssapi = False
 
     def getpassword(self):
         """Returns the server password or None"""
@@ -241,26 +240,24 @@ class IMAPServer:
                             try:
                                 imapobj.authenticate('GSSAPI', self.gssauth)
                             except imapobj.error, val:
-                                self.gssapi = False
                                 self.ui.debug('imap',
                                     'GSSAPI Authentication failed')
                             else:
-                                self.gssapi = True
                                 kerberos.authGSSClientClean(self.gss_vc)
                                 self.gss_vc = None
                                 self.gss_step = self.GSS_STATE_STEP
-                                #if we do self.password = None then the next attempt cannot try...
-                                #self.password = None
+                                success = True
                             finally:
                                 self.connectionlock.release()
 
-                        if not self.gssapi:
-                            if 'STARTTLS' in imapobj.capabilities and not\
-                                    self.usessl:
-                                self.ui.debug('imap',
-                                              'Using STARTTLS connection')
-                                imapobj.starttls()
+                        if not success and 'STARTTLS' in imapobj.capabilities \
+                                and not self.usessl:
+                            self.ui.debug('imap',
+                                          'Using STARTTLS connection')
+                            imapobj.starttls()
+                            success = True
 
+                        if not success:
                             if 'AUTH=CRAM-MD5' in imapobj.capabilities:
                                 self.ui.debug('imap',
                                            'Attempting CRAM-MD5 authentication')
@@ -278,7 +275,7 @@ class IMAPServer:
                                         OfflineImapError.ERROR.REPO)
                                 self.plainauth(imapobj)
                         # Would bail by here if there was a failure.
-                        success = 1
+                        success = True
                         self.goodpassword = self.password
                     except imapobj.error, val:
                         self.passworderror = str(val)
@@ -380,7 +377,6 @@ class IMAPServer:
             # reset kerberos state
             self.gss_step = self.GSS_STATE_STEP
             self.gss_vc = None
-            self.gssapi = False
 
     def keepalive(self, timeout, event):
         """Sends a NOOP to each connection recorded.   It will wait a maximum
