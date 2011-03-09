@@ -45,6 +45,7 @@ try:
 except ImportError:
     pass
 
+
 class IMAPServer:
     """Initializes all variables from an IMAPRepository() instance
 
@@ -208,12 +209,13 @@ class IMAPServer:
             success = False
             while not success:
                 # Generate a new connection.
-                if self.tunnel:
+                if self.tunnel:    # 1)build up pre-auth tunnel?
                     self.ui.connecting('tunnel', self.tunnel)
                     imapobj = imaplibutil.IMAP4_Tunnel(self.tunnel,
-                                                       timeout=socket.getdefaulttimeout())
-                    success = 1
-                elif self.usessl:
+                                            timeout=socket.getdefaulttimeout())
+                    success = True
+                    break # success, we can skip authentication
+                elif self.usessl:  # 2)SSL connection?
                     self.ui.connecting(self.hostname, self.port)
                     fingerprint = self.repos.get_ssl_fingerprint()
                     imapobj = imaplibutil.WrappedIMAP4_SSL(self.hostname,
@@ -228,59 +230,62 @@ class IMAPServer:
                 else:
                     self.ui.connecting(self.hostname, self.port)
                     imapobj = imaplibutil.WrappedIMAP4(self.hostname, self.port,
-                                                       timeout=socket.getdefaulttimeout())
+                                            timeout=socket.getdefaulttimeout())
 
-                if not self.tunnel:
+                # Authenticate: GSSAPI, MD5-CRAM, then PLAINTEXT
+                if have_gss and 'AUTH=GSSAPI' in imapobj.capabilities:
+                    self.ui.debug('imap',
+                                  'Attempting GSSAPI authentication')
+                    self.connectionlock.acquire()
                     try:
-                        # Try GSSAPI and continue if it fails
-                        if 'AUTH=GSSAPI' in imapobj.capabilities and have_gss:
-                            self.connectionlock.acquire()
-                            self.ui.debug('imap',
-                                'Attempting GSSAPI authentication')
-                            try:
-                                imapobj.authenticate('GSSAPI', self.gssauth)
-                            except imapobj.error, val:
-                                self.ui.debug('imap',
-                                    'GSSAPI Authentication failed')
-                            else:
-                                kerberos.authGSSClientClean(self.gss_vc)
-                                self.gss_vc = None
-                                self.gss_step = self.GSS_STATE_STEP
-                                success = True
-                            finally:
-                                self.connectionlock.release()
-
-                        if not success and 'STARTTLS' in imapobj.capabilities \
-                                and not self.usessl:
-                            self.ui.debug('imap',
-                                          'Using STARTTLS connection')
-                            imapobj.starttls()
-                            success = True
-
-                        if not success:
-                            if 'AUTH=CRAM-MD5' in imapobj.capabilities:
-                                self.ui.debug('imap',
-                                           'Attempting CRAM-MD5 authentication')
-                                try:
-                                    imapobj.authenticate('CRAM-MD5',
-                                                         self.md5handler)
-                                except imapobj.error, val:
-                                    self.plainauth(imapobj)
-                            else:
-                                # Use plaintext login, unless
-                                # LOGINDISABLED (RFC2595)
-                                if 'LOGINDISABLED' in imapobj.capabilities:
-                                    raise OfflineImapError("Plaintext login "
-                                       "disabled by server. Need to use SSL?",
-                                        OfflineImapError.ERROR.REPO)
-                                self.plainauth(imapobj)
-                        # Would bail by here if there was a failure.
-                        success = True
-                        self.goodpassword = self.password
+                        imapobj.authenticate('GSSAPI', self.gssauth)
                     except imapobj.error, val:
-                        self.passworderror = str(val)
-                        raise
+                        self.ui.debug('imap',
+                                      'GSSAPI Authentication failed')
+                    else:
+                        kerberos.authGSSClientClean(self.gss_vc)
+                        self.gss_vc = None
+                        self.gss_step = self.GSS_STATE_STEP
+                        success = True
+                        break
+                    finally:
+                        self.connectionlock.release()
 
+                if 'STARTTLS' in imapobj.capabilities and not self.usessl:
+                    self.ui.debug('imap', 'Using STARTTLS connection')
+                    imapobj.starttls()
+                    success = True
+                    break
+
+                if 'AUTH=CRAM-MD5' in imapobj.capabilities:
+                    self.ui.debug('imap',
+                                  'Attempting CRAM-MD5 authentication')
+                    try:
+                        imapobj.authenticate('CRAM-MD5', self.md5handler)
+                    except imapobj.error, val:
+                        # log but ignore failures, continue to plainauth
+                        self.ui.debug('imap',
+                                  'CRAM-MD5 authentication failed')
+                    else:
+                        success = True
+                        break
+
+                try: # Finally plainauth as 'last resort
+                    # Use plaintext login, unless LOGINDISABLED (RFC2595)
+                    if 'LOGINDISABLED' in imapobj.capabilities:
+                        raise OfflineImapError("Plaintext login "
+                              "disabled by server. Need to use SSL?",
+                                               OfflineImapError.ERROR.REPO)
+                    self.plainauth(imapobj)
+                except imapobj.error as e:
+                    self.passworderror = str(e)
+                    raise #bail out if plaintext auth fails
+                success = True
+
+            # Finished authenticating to imapobj here!
+            self.goodpassword = self.password
+
+            #Retrieve self.delim and self.root if necessary
             if self.delim == None:
                 listres = imapobj.list(self.reference, '""')[1]
                 if listres == [None] or listres == None:
