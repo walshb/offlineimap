@@ -549,14 +549,6 @@ class Blinkenlights(BlinkenBase, UIBase):
         s.c.stop()
         UIBase.terminate(s, exitstatus = exitstatus, errortitle = errortitle, errormsg = errormsg)
 
-    def threadException(s, thread):
-        s.c.stop()
-        UIBase.threadException(s, thread)
-
-    def mainException(s):
-        s.c.stop()
-        UIBase.mainException(s)
-
     def sleep(s, sleepsecs, account):
         s.gettf().setcolor('red')
         s._msg("Next sync in %d:%02d" % (sleepsecs / 60, sleepsecs % 60))

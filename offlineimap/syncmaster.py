@@ -16,23 +16,18 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
-from offlineimap.threadutil import threadlist, InstanceLimitedThread
+from offlineimap.threadutil import ThreadQueue, InstanceLimitedThread
 from offlineimap.accounts import SyncableAccount
-from threading import currentThread
-
-def syncaccount(threads, config, accountname):
-    account = SyncableAccount(config, accountname)
-    thread = InstanceLimitedThread(instancename = 'ACCOUNTLIMIT',
-                                   target = account.syncrunner,
-                                   name = "Account sync %s" % accountname)
-    thread.setDaemon(1)
-    thread.start()
-    threads.add(thread)
 
 def syncitall(accounts, config):
-    currentThread().setExitMessage('SYNC_WITH_TIMER_TERMINATE')
-    threads = threadlist()
+    """Launch account syncing Threads and wait for them to terminate"""
+    threads = ThreadQueue()
     for accountname in accounts:
-        syncaccount(threads, config, accountname)
-    # Wait for the threads to finish.
-    threads.reset()
+        account = SyncableAccount(config, accountname)
+        thread = InstanceLimitedThread(instancename = 'ACCOUNTLIMIT',
+                                       target = account.syncrunner,
+                                       name = "Account sync %s" % accountname)
+        thread.setDaemon(1)
+        thread.start()
+        threads.put(thread)
+    threads.join()

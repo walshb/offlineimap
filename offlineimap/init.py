@@ -18,6 +18,7 @@
 
 import os
 import sys
+import time
 import threading
 import offlineimap.imaplib2 as imaplib
 import signal
@@ -173,7 +174,7 @@ class OfflineImap:
                 options.singlethreading = True
             profiledir = options.profiledir
             os.mkdir(profiledir)
-            threadutil.setprofiledir(profiledir)
+            ExitNotifyThread.profiledir = profiledir
             logging.warn("Profile mode: Potentially large data will be "
                          "created in '%s'" % profiledir)
 
@@ -294,7 +295,8 @@ class OfflineImap:
                         errormsg = 'The account "%s" does not exist.  Valid accounts are:'%account
                         for name in allaccounts.keys():
                             errormsg += '\n%s'%name
-                    ui.terminate(1, errortitle = 'Unknown Account "%s"'%account, errormsg = errormsg)
+                    ui.terminate(1, 'Unknown Account "%s"' % account,
+                                 errormsg)
                 if account not in syncaccounts:
                     syncaccounts.append(account)
     
@@ -341,7 +343,12 @@ class OfflineImap:
                                            'config': config})
                 t.setDaemon(1)
                 t.start()
-                threadutil.exitnotifymonitorloop(threadutil.threadexited)
+                # wait for syncmaster thread to exit (all subthreads
+                # terminated) use sleep, not join() without timeout, so
+                # we can still receive
+                # signals. (http://bugs.python.org/issue1360).
+                while t.isAlive():
+                    time.sleep(0.5)
 
             ui.terminate()
         except KeyboardInterrupt:
@@ -349,8 +356,9 @@ class OfflineImap:
             return
         except (SystemExit):
             raise
-        except:
-            ui.mainException()
+        except Exception, e:
+            ui.error(e, sys.exc_info()[2])
+            ui.terminate(2, 'Exception in main thread')
 
     def sync_singlethreaded(self, accs, config):
         """Executed if we do not want a separate syncmaster thread

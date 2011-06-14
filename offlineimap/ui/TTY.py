@@ -61,11 +61,3 @@ class TTYUI(UIBase):
         finally:
             s.outputlock.release()
 
-    def mainException(s):
-        if isinstance(sys.exc_info()[1], KeyboardInterrupt) and \
-           s.iswaiting:
-            sys.stdout.write("Timer interrupted at user request; program terminating.             \n")
-            s.terminate()
-        else:
-            UIBase.mainException(s)
-

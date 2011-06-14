@@ -20,6 +20,10 @@ New Features
 Changes
 -------
 
+* Reworked Thread monitoring, simplifying the code. The 'downside', we
+  might use up to 0.5 seconds more until we notice that all threads
+  finished.
+
 Bug Fixes
 ---------
 

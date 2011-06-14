@@ -330,27 +330,6 @@ class UIBase:
         if s.debugmessages.has_key(thread):
             del s.debugmessages[thread]
 
-    def getThreadExceptionString(s, thread):
-        message = "Thread '%s' terminated with exception:\n%s" % \
-                  (thread.getName(), thread.getExitStackTrace())
-        message += "\n" + s.getThreadDebugLog(thread)
-        return message
-
-    def threadException(s, thread):
-        """Called when a thread has terminated with an exception.
-        The argument is the ExitNotifyThread that has so terminated."""
-        s._msg(s.getThreadExceptionString(thread))
-        s.delThreadDebugLog(thread)
-        s.terminate(100)
-
-    def getMainExceptionString(s):
-        return "Main program terminated with exception:\n%s\n" %\
-               traceback.format_exc() + \
-               s.getThreadDebugLog(threading.currentThread())
-
-    def mainException(s):
-        s._msg(s.getMainExceptionString())
-
     def terminate(self, exitstatus = 0, errortitle = None, errormsg = None):
         """Called to terminate the application."""
         #print any exceptions that have occurred over the run
