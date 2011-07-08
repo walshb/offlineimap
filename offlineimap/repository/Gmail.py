@@ -57,11 +57,6 @@ class GmailRepository(IMAPRepository):
     def getpreauthtunnel(self):
         return None
 
-    def getfolder(self, foldername):
-        return self.getfoldertype()(self.imapserver, foldername,
-                                    self.nametrans(foldername),
-                                    self.accountname, self)
-
     def getfoldertype(self):
         return folder.Gmail.GmailFolder
 
