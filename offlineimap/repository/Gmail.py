@@ -15,8 +15,9 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
+from offlineimap.imaputil import imapsplit, flagsplit, dequote
 from offlineimap.repository.IMAP import IMAPRepository
-from offlineimap import folder, OfflineImapError
+from offlineimap import folder, OfflineImapError, imaplib2
 
 class GmailRepository(IMAPRepository):
     """Gmail IMAP repository.
@@ -34,7 +35,10 @@ class GmailRepository(IMAPRepository):
         # Enforce SSL usage
         account.getconfig().set('Repository ' + reposname,
                                 'ssl', 'yes')
+        self._special_folders = None #fetched on demand, see below
+        """when populated, {'Spam':foldername1, 'AllMail':f2, 'Trash':f3}"""
         IMAPRepository.__init__(self, reposname, account)
+        self.get_real_delete_folders()
 
     def gethost(self):
         """Return the server name to connect to.
@@ -65,11 +69,44 @@ class GmailRepository(IMAPRepository):
         # setting is repository-wide
         return self.getconfboolean('realdelete', 0)
 
-    def gettrashfolder(self, foldername):
-        #: Where deleted mail should be moved
-        return  self.getconf('trashfolder','[Gmail]/Trash')
-	
-    def getspamfolder(self):
-        #: Gmail also deletes messages upon EXPUNGE in the Spam folder
-        return  self.getconf('spamfolder','[Gmail]/Spam')
+    def get_real_delete_folders(self):
+        """Gmail will really delete messages upon EXPUNGE in these folders
+
+        This populates the list of folders on demand, it we must be able
+        to acquire an IMAP connection here"""
+        if self._special_folders is None:
+            self.get_trashfolder() #populates self._sepcial_folders
+        folders = [v for (k,v) in self._special_folders.iteritems() \
+                       if k in ['Spam','Trash']]
+        return folders
+
+    def get_trashfolder(self):
+        """Where mail is moved that should be deleted for real
+
+        This fetches spam and trash folder names on first access, it we
+        must potentially be able to acquire an IMAP connection here.
+        :returns: name of the trashfolder as string, `None` if none was
+        returned or an exception."""
+        if self._special_folders != None:
+            return self._special_folders.get('Trash', None)
+        # Fetch trash and spam folder names
+        self._special_folders = {}
+        imapobj = self.imapserver.acquireconnection()
+        try:
+            typ, data = imapobj.xatom('XLIST','""','*')
+            #returns 'OK' ['Success'], now get list of folders
+            data= imapobj._get_untagged_response('XLIST')
+            for folder in data:
+                flags, sep, name = imapsplit(folder)
+                if '\\Trash' in flags:
+                    self._special_folders['Trash'] = dequote(name)
+                elif '\\Spam' in flags:
+                    self._special_folders['Spam'] = dequote(name)
+                elif '\\AllMail' in flags:
+                    self._special_folders['AllMail'] = dequote(name)
+        except Exception, e:
+            raise e #TODO raise OfflineImapError here
+        finally:
+            self.imapserver.releaseconnection(imapobj)
+        return self._special_folders.get('Trash', None)
 

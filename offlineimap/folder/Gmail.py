@@ -36,9 +36,6 @@ class GmailFolder(IMAPFolder):
 
     def __init__(self, imapserver, name, visiblename, accountname, repository):
         self.realdelete = repository.getrealdelete(name)
-        self.trash_folder = repository.gettrashfolder(name)
-        #: Gmail will really delete messages upon EXPUNGE in these folders
-        self.real_delete_folders =  [ self.trash_folder, repository.getspamfolder() ]
         IMAPFolder.__init__(self, imapserver, name, visiblename, \
                             accountname, repository)
 
@@ -47,7 +44,8 @@ class GmailFolder(IMAPFolder):
         if not len(uidlist):
             return        
 
-        if self.realdelete and not (self.getname() in self.real_delete_folders):
+        if self.realdelete and \
+                not (self.name in self.repository.get_realdelete_folders()):
             # IMAP expunge is just "remove label" in this folder,
             # so map the request into a "move into Trash"
 
@@ -56,7 +54,7 @@ class GmailFolder(IMAPFolder):
                 imapobj.select(self.getfullname())
                 result = imapobj.uid('copy',
                                      imaputil.listjoin(uidlist),
-                                     self.trash_folder)
+                                     self.repository.get_trashfolder())
                 assert result[0] == 'OK', \
                        "Bad IMAPlib result: %s" % result[0]
             finally:
