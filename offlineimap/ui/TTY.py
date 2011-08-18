@@ -17,6 +17,7 @@
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
 from UIBase import UIBase
+import logging
 from getpass import getpass
 import sys
 from threading import Lock, currentThread
@@ -31,26 +32,24 @@ class TTYUI(UIBase):
     def isusable(s):
         return sys.stdout.isatty() and sys.stdin.isatty()
         
-    def _display(s, msg):
-        s.outputlock.acquire()
-        try:
+    def _display(self, msg):
             #if the next output comes from a different thread than our last one
             #add the info.
             #Most look like 'account sync foo' or 'Folder sync foo'.
-            try:
-                threadname = currentThread().name
-            except AttributeError:
-                threadname = currentThread().getName()
-            if (threadname == s._lastThreaddisplay \
-                    or threadname == 'MainThread'):
-                print " %s" % msg
-            else:
-                print "%s:\n %s" % (threadname, msg)
-                s._lastThreaddisplay = threadname
+        try:
+            threadname = currentThread().name
+        except AttributeError:
+            threadname = currentThread().getName()
+        if (threadname == self._lastThreaddisplay \
+                or threadname == 'MainThread'):
+            self.logger.info(" %s" % msg)
+        else:
+            self.logger.info("%s:\n %s" % (threadname, msg))
+            self._lastThreaddisplay = threadname
 
-            sys.stdout.flush()
-        finally:
-            s.outputlock.release()
+    def debug(self, debugtype, msg):
+        if debugtype in self.debuglist:
+            self.logger.debug("[%s] %s" % (debugtype, msg))
 
     def getpass(s, accountname, config, errmsg = None):
         if errmsg:

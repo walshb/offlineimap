@@ -16,6 +16,7 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
+import logging
 import re
 import time
 import sys
@@ -50,6 +51,17 @@ class UIBase:
         s.logfile = None
         s.exc_queue = Queue()
         """saves all occuring exceptions, so we can output them at the end"""
+        # create logger with 'spam_application'
+        s.logger = logging.getLogger('OfflineImap')
+        s.logger.setLevel(logging.DEBUG)
+        # create console handler with a higher log level
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        # create formatter and add it to the handlers
+        s.formatter = logging.Formatter('%(levelname)s: %(message)s')
+        ch.setFormatter(s.formatter)
+        # add the handlers to the logger
+        s.logger.addHandler(ch)
 
     ################################################## UTILS
     def _msg(s, msg):
@@ -60,20 +72,21 @@ class UIBase:
     def _log(s, msg):
         """Log it to disk.  Returns true if it wrote something; false
         otherwise."""
-        if s.logfile:
-            s.logfile.write("%s: %s\n" % (threading.currentThread().getName(),
-                                          msg))
-            return 1
         return 0
 
-    def setlogfd(s, logfd):
-        s.logfile = logfd
-        logfd.write("This is %s %s\n" % \
-                    (offlineimap.__productname__,
-                     offlineimap.__version__))
-        logfd.write("Python: %s\n" % sys.version)
-        logfd.write("Platform: %s\n" % sys.platform)
-        logfd.write("Args: %s\n" % sys.argv)
+    def setlogfile(self, logfile):
+        # create file handler which logs even debug messages
+        fh = logging.FileHandler(logfile)
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(self.formatter)
+        self.logger.addHandler(fh)
+
+        #loglogfd.write("This is %s %s\n" % \
+        #            (offlineimap.__productname__,
+        #             offlineimap.__version__))
+        #logfd.write("Python: %s\n" % sys.version)
+        #logfd.write("Platform: %s\n" % sys.platform)
+        #logfd.write("Args: %s\n" % sys.argv)
 
     def _display(s, msg):
         """Display a message."""
