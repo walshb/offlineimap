@@ -28,6 +28,7 @@ Changes
 * Remove the configurability of the Blinkenlights statuschar. It
   cluttered the main configuration file for little gain.
 * Updated bundled imaplib2 to version 2.28.
+* Maildir repositories now also respond to folderfilter= configurations.
 
 Bug Fixes
 ---------
