@@ -29,6 +29,8 @@ except NameError:
 
 class BaseFolder(object):
     def __init__(self):
+        self.sync_this = True
+        """Should this folder be included in syncing?"""
         self.ui = getglobalui()
 
     def getname(self):
