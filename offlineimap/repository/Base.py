@@ -16,10 +16,13 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
+import re
 import os.path
 import traceback
+from sys import exc_info
 from offlineimap import CustomConfig
 from offlineimap.ui import getglobalui
+from offlineimap.error import OfflineImapError
 
 class BaseRepository(object, CustomConfig.ConfigHelperMixin):
     def __init__(self, reposname, account):
@@ -38,6 +41,23 @@ class BaseRepository(object, CustomConfig.ConfigHelperMixin):
         self.uiddir = os.path.join(self.uiddir, 'FolderValidity')
         if not os.path.exists(self.uiddir):
             os.mkdir(self.uiddir, 0700)
+
+        self.nametrans = lambda foldername: foldername
+        self.folderfilter = lambda foldername: 1
+        self.folderincludes = []
+        self.foldersort = cmp
+        if self.config.has_option(self.getsection(), 'nametrans'):
+            self.nametrans = self.localeval.eval(
+                self.getconf('nametrans'), {'re': re})
+        if self.config.has_option(self.getsection(), 'folderfilter'):
+            self.folderfilter = self.localeval.eval(
+                self.getconf('folderfilter'), {'re': re})
+        if self.config.has_option(self.getsection(), 'folderincludes'):
+            self.folderincludes = self.localeval.eval(
+                self.getconf('folderincludes'), {'re': re})
+        if self.config.has_option(self.getsection(), 'foldersort'):
+            self.foldersort = self.localeval.eval(
+                self.getconf('foldersort'), {'re': re})
 
     # The 'restoreatime' config parameter only applies to local Maildir
     # mailboxes.
@@ -117,7 +137,11 @@ class BaseRepository(object, CustomConfig.ConfigHelperMixin):
     def syncfoldersto(self, dst_repo, status_repo):
         """Syncs the folders in this repository to those in dest.
 
-        It does NOT sync the contents of those folders."""
+        It does NOT sync the contents of those folders. nametrans rules
+        in both directions will be honored, but there are NO checks yet
+        that forward and backward nametrans actually match up!
+        Configuring nametrans on BOTH repositories therefore could lead
+        to infinite folder creation cycles."""
         src_repo = self
         src_folders = src_repo.getfolders()
         dst_folders = dst_repo.getfolders()
@@ -132,30 +156,33 @@ class BaseRepository(object, CustomConfig.ConfigHelperMixin):
         for folder in dst_folders:
             dst_hash[folder.getvisiblename()] = folder
 
-        #
-        # Find new folders.
-        for key in src_hash.keys():
-            if not key in dst_hash:
+        # Find new folders on src_repo.
+        for src_name, src_folder in src_hash.iteritems():
+            if src_folder.sync_this and not src_name in dst_hash:
                 try:
-                    dst_repo.makefolder(key)
-                    status_repo.makefolder(key.replace(dst_repo.getsep(),
-                                                      status_repo.getsep()))
-                except (KeyboardInterrupt):
+                    dst_repo.makefolder(src_name)
+                except OfflineImapError, e:
+                    self.ui.error(e, exc_info()[2],
+                                  "Creating folder %s on repository %s" %\
+                                      (src_name, dst_repo))
                     raise
-                except:
-                    self.ui.warn("ERROR Attempting to create folder " \
-                        + key + ":"  +traceback.format_exc())
-
-        #
+                status_repo.makefolder(src_name.replace(dst_repo.getsep(),
+                                                   status_repo.getsep()))
+        # Find new folders on dst_repo.
+        for dst_name, dst_folder in dst_hash.iteritems():
+            if dst_folder.sync_this and not dst_name in src_hash:
+                try:
+                    src_repo.makefolder(dst_name.replace(
+                            dst_repo.getsep(), src_repo.getsep()))
+                except OfflineImapError, e:
+                    self.ui.error(e, exc_info()[2],
+                                  "Creating folder %s on repository %s" %\
+                                      (src_name, dst_repo))
+                    raise
+                status_repo.makefolder(dst_name.replace(
+                                dst_repo.getsep(), status_repo.getsep()))
         # Find deleted folders.
-        #
         # We don't delete folders right now.
-
-        #for key in desthash.keys():
-        #    if not key in srchash:
-        #        dest.deletefolder(key)
-        
-    ##### Keepalive
 
     def startkeepalive(self):
         """The default implementation will do nothing."""
