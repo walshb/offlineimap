@@ -208,7 +208,7 @@ class OfflineImap:
 
         #set up additional log files
         if options.logfile:
-            ui.setlogfd(open(options.logfile, 'wt'))
+            ui.setlogfile(options.logfile)
     
         #welcome blurb
         ui.init_banner()
