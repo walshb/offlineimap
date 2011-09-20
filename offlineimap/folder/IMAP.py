@@ -619,14 +619,8 @@ class IMAPFolder(BaseFolder):
     def addmessageflags(self, uid, flags):
         self.addmessagesflags([uid], flags)
 
-    def addmessagesflags_noconvert(self, uidlist, flags):
-        self.processmessagesflags('+', uidlist, flags)
-
     def addmessagesflags(self, uidlist, flags):
-        """This is here for the sake of UIDMaps.py -- deletemessages must
-        add flags and get a converted UID, and if we don't have noconvert,
-        then UIDMaps will try to convert it twice."""
-        self.addmessagesflags_noconvert(uidlist, flags)
+        self.processmessagesflags('+', uidlist, flags)
 
     def deletemessageflags(self, uid, flags):
         self.deletemessagesflags([uid], flags)
@@ -683,18 +677,15 @@ class IMAPFolder(BaseFolder):
                 self.messagelist[uid]['flags'] -= flags
 
     def deletemessage(self, uid):
-        self.deletemessages_noconvert([uid])
+        self.deletemessages([uid])
 
     def deletemessages(self, uidlist):
-        self.deletemessages_noconvert(uidlist)
-
-    def deletemessages_noconvert(self, uidlist):
         # Weed out ones not in self.messagelist
         uidlist = [uid for uid in uidlist if self.uidexists(uid)]
         if not len(uidlist):
             return
 
-        self.addmessagesflags_noconvert(uidlist, set('T'))
+        self.addmessagesflags(uidlist, set('T'))
         imapobj = self.imapserver.acquireconnection()
         try:
             try:
@@ -708,5 +699,3 @@ class IMAPFolder(BaseFolder):
             self.imapserver.releaseconnection(imapobj)
         for uid in uidlist:
             del self.messagelist[uid]
-
-
