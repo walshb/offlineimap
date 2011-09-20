@@ -18,7 +18,13 @@
 from __future__ import with_statement # needed for python 2.5
 from threading import Lock
 from IMAP import IMAPFolder
+from offlineimap import OfflineImapError
 import os.path
+try: # python 2.6 has set() built in
+    set
+except NameError:
+    from sets import Set as set
+
 
 class MappedIMAPFolder(IMAPFolder):
     """IMAP class to map between Folder() instances where both side assign a uid
@@ -26,96 +32,89 @@ class MappedIMAPFolder(IMAPFolder):
     This Folder is used on the local side, while the remote side should
     be an IMAPFolder.
 
-    Instance variables (self.):
-      r2l: dict mapping message uids: self.r2l[remoteuid]=localuid
-      l2r: dict mapping message uids: self.r2l[localuid]=remoteuid
-      #TODO: what is the difference, how are they used?
-      diskr2l: dict mapping message uids: self.r2l[remoteuid]=localuid
-      diskl2r: dict mapping message uids: self.r2l[localuid]=remoteuid"""
+    If new functions are added to the IMAPFolder backend, this backend
+    also needs to add new functions translating calls to the RUID to use
+    the LUID instead.
+
+    Instance variables (self.): r2l: dict mapping message uids:
+      self.r2l[remoteuid]=localuid"""
 
     def __init__(self, *args, **kwargs):
-        IMAPFolder.__init__(self, *args, **kwargs)
-        self.maplock = Lock()
-        (self.diskr2l, self.diskl2r) = self._loadmaps()
-        self._mb = IMAPFolder(*args, **kwargs)
-        """Representing the local IMAP Folder using local UIDs"""
+        super(MappedIMAPFolder, self).__init__(*args, **kwargs)
+        self.maplock = Lock() # protect mapping file
 
     def _getmapfilename(self):
+        """Absolute path of where we store the UID mapping file"""
         return os.path.join(self.repository.getmapdir(),
                             self.getfolderbasename())
         
     def _loadmaps(self):
-        self.maplock.acquire()
-        try:
+        """Load the mapping file and return a R2L UID mapping dict
+
+        :returns: Dict with {RUID:LUID, RUID2:LUID2,...} or raises
+            OfflineImapError at servity REPO (if e.g the Mapping file
+            could not be found)"""
+        r2l = {}
+        severity = OfflineImapError.ERROR.REPO
+        with self.maplock:
             mapfilename = self._getmapfilename()
             if not os.path.exists(mapfilename):
-                return ({}, {})
-            file = open(mapfilename, 'rt')
-            r2l = {}
-            l2r = {}
-            while 1:
-                line = file.readline()
-                if not len(line):
-                    break
-                try:
+                raise OfflineImapError("UID Mapping file for folder '%s', repos"
+                    "itory '%s' not found." % (self, self.repository),
+                                       severity)
+            with open(mapfilename, 'rt') as file:
+                for line in file:
                     line = line.strip()
-                except ValueError:
-                    raise Exception("Corrupt line '%s' in UID mapping file '%s'" \
-                                        %(line, mapfilename))
-                (str1, str2) = line.split(':')
-                loc = long(str1)
-                rem = long(str2)
-                r2l[rem] = loc
-                l2r[loc] = rem
-            return (r2l, l2r)
-        finally:
-            self.maplock.release()
+                    if not len(line):
+                        break #skip empty lines
+                    try:
+                        (Luid, Ruid) = map(long, line.split(':'))
+                    except ValueError:
+                        raise OfflineImapError("Corrupt line '%s' in UID mappin"
+                            "g file, folder '%s' (repository '%s')" %
+                                           (line, folder, self.repository),
+                                           severity)
+                    r2l[Ruid] = Luid
+        return r2l
 
-    def _savemaps(self, dolock = 1):
+    def _savemaps(self):
         mapfilename = self._getmapfilename()
-        if dolock: self.maplock.acquire()
-        try:
-            file = open(mapfilename + ".tmp", 'wt')
-            for (key, value) in self.diskl2r.iteritems():
-                file.write("%d:%d\n" % (key, value))
-            file.close()
-            os.rename(mapfilename + '.tmp', mapfilename)
-        finally:
-            if dolock: self.maplock.release()
-
-    def _uidlist(self, mapping, items):
-        return [mapping[x] for x in items]
-
-    def cachemessagelist(self):
-        self._mb.cachemessagelist()
-        reallist = self._mb.getmessagelist()
-
         self.maplock.acquire()
         try:
-            # OK.  Now we've got a nice list.  First, delete things from the
-            # summary that have been deleted from the folder.
-
-            for luid in self.diskl2r.keys():
-                if not reallist.has_key(luid):
-                    ruid = self.diskl2r[luid]
-                    del self.diskr2l[ruid]
-                    del self.diskl2r[luid]
-
-            # Now, assign negative UIDs to local items.
-            self._savemaps(dolock = 0)
-            nextneg = -1
-
-            self.r2l = self.diskr2l.copy()
-            self.l2r = self.diskl2r.copy()
-
-            for luid in reallist.keys():
-                if not self.l2r.has_key(luid):
-                    ruid = nextneg
-                    nextneg -= 1
-                    self.l2r[luid] = ruid
-                    self.r2l[ruid] = luid
+            with open(mapfilename + ".tmp", 'wt') as file:
+                for ruid, luid in self.r2l.iteritems():
+                    if ruid > 0: # only write out already synced mappings
+                        file.write("%d:%d\n" % (ruid, luid))
+            os.rename(mapfilename + '.tmp', mapfilename)
         finally:
             self.maplock.release()
+
+    def ruids_to_luids(self, Ruidlist):
+        """Given a list of remote UIDs, returns a list of local UIDs"""
+        return [self.r2l[Ruid] for Ruid in Ruidlist]
+
+    def cachemessagelist(self):
+        """While cachmessagelist operates, the self.r2l is not stable
+        and should not yet be accessed by other threads."""
+        # populate self.messagelist{'uid':{'uid','flags','time'},...}, with uid
+        # being the local uid, but still missing out the remote UID
+        super(MappedIMAPFolder, self).cachemessagelist()
+        self.r2l = self._loadmaps()
+        # assign negative rUIDs to new local items without known remote UID.
+        nextneg = -1
+        for luid in set(self.messagelist.keys()) - set(self.r2l.values()):
+            # exists locally but no know remote ID:
+            ruid = nextneg
+            nextneg -= 1
+            self.r2l[ruid] = luid
+
+        # delete entries where local items have disappeared, ie mapping
+        # exists but local IMAP has no entry
+        for ruid, luid in self.r2l.items():
+            #not using  iterator so we can delete keys while iterating
+            if luid not in self.messagelist:
+                # exists in r2l but not locally, delete
+                del self.r2l[ruid]
 
     def uidexists(self, ruid):
         """Checks if the (remote) UID exists in this Folder"""
@@ -143,30 +142,21 @@ class MappedIMAPFolder(IMAPFolder):
         cachemessagelist() before calling this function!"""
 
         retval = {}
-        localhash = self._mb.getmessagelist()
         self.maplock.acquire()
         try:
-            for key, value in localhash.items():
-                try:
-                    key = self.l2r[key]
-                except KeyError:
-                    # Sometimes, the IMAP backend may put in a new message,
-                    # then this function acquires the lock before the system
-                    # has the chance to note it in the mapping.  In that case,
-                    # just ignore it.
-                    continue
+            for luid, value in localhash.iteritems():
                 value = value.copy()
                 value['uid'] = self.l2r[value['uid']]
                 retval[key] = value
-            return retval
         finally:
             self.maplock.release()
+        return retval
 
-    def getmessage(self, uid):
+    def getmessage(self, ruid):
         """Returns the content of the specified message."""
-        return self._mb.getmessage(self.r2l[uid])
+        return super(MappedIMAPFolder, self).getmessage(self.r2l[ruid])
 
-    def savemessage(self, uid, content, flags, rtime):
+    def savemessage(self, ruid, content, flags, rtime):
         """Writes a new message, with the specified uid.
 
         The UIDMaps class will not return a newly assigned uid, as it
@@ -183,72 +173,67 @@ class MappedIMAPFolder(IMAPFolder):
         """
         # Mapped UID instances require the source to already have a
         # positive UID, so simply return here.
-        if uid < 0:
-            return uid
+        if ruid < 0:
+            return ruid
 
         #if msg uid already exists, just modify the flags
-        if uid in self.r2l:
-            self.savemessageflags(uid, flags)
-            return uid
+        if self.uidexists(ruid):
+            self.savemessageflags(ruid, flags)
+            return ruid
 
-        newluid = self._mb.savemessage(-1, content, flags, rtime)
+        newluid = super(MappedIMAPFolder, self)\
+            .savemessage(-1, content, flags, rtime)
         if newluid < 1:
+            #TODO Offlineimaperror, better make IMAPFolder throw an error
             raise ValueError("Backend could not find uid for message")
-        self.maplock.acquire()
-        try:
-            self.diskl2r[newluid] = uid
-            self.diskr2l[uid] = newluid
-            self.l2r[newluid] = uid
-            self.r2l[uid] = newluid
-            self._savemaps(dolock = 0)
-        finally:
-            self.maplock.release()
-        return uid
+        self.r2l[ruid] = newluid
+        self._savemaps()
+        return ruid
 
-    def getmessageflags(self, uid):
-        return self._mb.getmessageflags(self.r2l[uid])
+    def getmessageflags(self, ruid):
+        return super(MappedIMAPFolder, self).getmessageflags(self.r2l[ruid])
 
-    def getmessagetime(self, uid):
-        return None
+    def getmessagetime(self, ruid):
+        return self.messagelist[self.r2l[ruid]]['time']
 
-    def savemessageflags(self, uid, flags):
-        self._mb.savemessageflags(self.r2l[uid], flags)
+    def savemessageflags(self, ruid, flags):
+        return super(MappedIMAPFolder, self).savemessageflags(self.r2l[ruid],
+                                                              flags)
+    def addmessageflags(self, ruid, flags):
+        return super(MappedIMAPFolder, self).addmessageflags(self.r2l[ruid],
+                                                              flags)
+    def addmessagesflags(self, ruidlist, flags):
+        return super(MappedIMAPFolder, self).addmessagesflags(
+            self.ruids_to_luids(ruidlist), flags)
 
-    def addmessageflags(self, uid, flags):
-        self._mb.addmessageflags(self.r2l[uid], flags)
+    def _delete_mapping(self, ruidlist):
+        """Delete mapping of a bunch of remote UIDS"""
+        needssave = 0
+        for ruid in uidlist:
+            del self.r2l[ruid]
+            if ruid > 0:
+                # modified our mapping file, save!
+                needssave = 1
+        if needssave:
+            self._savemaps()
 
-    def addmessagesflags(self, uidlist, flags):
-        self._mb.addmessagesflags(self._uidlist(self.r2l, uidlist),
-                                  flags)
+    def deletemessageflags(self, ruid, flags):
+        return super(MappedIMAPFolder, self).deletemessageflags(self.r2l[ruid],
+                                                                flags)
 
-    def _mapped_delete(self, uidlist):
-        self.maplock.acquire()
-        try:
-            needssave = 0
-            for ruid in uidlist:
-                luid = self.r2l[ruid]
-                del self.r2l[ruid]
-                del self.l2r[luid]
-                if ruid > 0:
-                    del self.diskr2l[ruid]
-                    del self.diskl2r[luid]
-                    needssave = 1
-            if needssave:
-                self._savemaps(dolock = 0)
-        finally:
-            self.maplock.release()
+    def deletemessagesflags(self, ruidlist, flags):
+        return super(MappedIMAPFolder, self).deletemessagesflags(
+            self.ruids_to_luids(ruidlist), flags)
 
-    def deletemessageflags(self, uid, flags):
-        self._mb.deletemessageflags(self.r2l[uid], flags)
+    def processmessagesflags(self, operation, ruidlist, flags):
+        return super(MappedIMAPFolder, self).processmessagesflags(
+            operation, self.ruids_to_luids(ruidlist), flags)
 
-    def deletemessagesflags(self, uidlist, flags):
-        self._mb.deletemessagesflags(self._uidlist(self.r2l, uidlist),
-                                     flags)
+    def deletemessage(self, ruid):
+        return super(MappedIMAPFolder, self).deletemessage(self.r2l[ruid])
+        self._delete_mapping([ruid])
 
-    def deletemessage(self, uid):
-        self._mb.deletemessage(self.r2l[uid])
-        self._mapped_delete([uid])
-
-    def deletemessages(self, uidlist):
-        self._mb.deletemessages(self._uidlist(self.r2l, uidlist))
-        self._mapped_delete(uidlist)
+    def deletemessages(self, ruidlist):
+        return super(MappedIMAPFolder, self).deletemessages(
+            self.ruids_to_luids(ruidlist))
+        self._delete_mapping(uidlist)
