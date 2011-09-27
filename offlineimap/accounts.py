@@ -1,5 +1,4 @@
-# Copyright (C) 2003 John Goerzen
-# <jgoerzen@complete.org>
+# Copyright (C) 2003-2011 John Goerzen & contributors
 #
 #    This program is free software; you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
@@ -15,7 +14,8 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
-from offlineimap import mbnames, CustomConfig, OfflineImapError
+from offlineimap import CustomConfig, OfflineImapError
+from offlineimap.mbnames import MBWriter
 from offlineimap.repository import Repository
 from offlineimap.ui import getglobalui
 from offlineimap.threadutil import InstanceLimitedThread
@@ -290,7 +290,7 @@ class SyncableAccount(Account):
             # wait for all threads to finish
             for thr in folderthreads:
                 thr.join()
-            mbnames.write()
+            MBWriter.write()
             localrepos.forgetfolders()
             remoterepos.forgetfolders()
         except:
@@ -346,7 +346,7 @@ def syncfolder(accountname, remoterepos, remotefolder, localrepos,
                          % localfolder)
             return
         # Write the mailboxes
-        mbnames.add(accountname, localfolder.getvisiblename())
+        MBWriter.add(accountname, localfolder.getvisiblename())
 
         # Load status folder.
         statusfolder = statusrepos.getfolder(remotefolder.getvisiblename().\

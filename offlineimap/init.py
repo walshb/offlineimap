@@ -33,7 +33,7 @@ from offlineimap import accounts, threadutil, syncmaster
 from offlineimap.error import OfflineImapError
 from offlineimap.ui import UI_LIST, setglobalui, getglobalui
 from offlineimap.CustomConfig import CustomConfigParser
-
+from offlineimap.mbnames import MBWriter
 
 class OfflineImap:
     """The main class that encapsulates the high level use of OfflineImap.
@@ -312,8 +312,8 @@ class OfflineImap:
             signal.signal(signal.SIGUSR1,sig_handler)
             signal.signal(signal.SIGUSR2,sig_handler)
     
-            #various initializations that need to be performed:
-            offlineimap.mbnames.init(config, syncaccounts)
+            #initializations MBWriter class
+            MBWriter.setup(config, syncaccounts)
 
             #TODO: keep legacy lock for a few versions, then remove.
             self._legacy_lock = open(self.config.getmetadatadir() + "/lock",
