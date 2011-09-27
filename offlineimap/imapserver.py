@@ -60,6 +60,9 @@ class IMAPServer:
         self.passworderror = None
         self.goodpassword = None
         self.hostname = None if self.tunnel else repos.gethost()
+        if type(self.hostname) == unicode:
+            # imaplib doesn't resolve uncode() host names
+            self.hostname = self.hostname.encode('utf-8')
         self.port = repos.getport()
         if self.port == None:
             self.port = 993 if self.usessl else 143

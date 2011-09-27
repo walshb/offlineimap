@@ -16,6 +16,8 @@
 #    along with this program; if not, write to the Free Software
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
+import locale
+import codecs
 import os
 import sys
 import threading
@@ -150,7 +152,9 @@ class OfflineImap:
             logging.error(" *** Config file '%s' does not exist; aborting!" %
                           configfilename)
             sys.exit(1)
-        config.read(configfilename)
+        # open config file in user's system encoding, e.g. UTF-8
+        encoding = locale.getpreferredencoding()
+        config.readfp(codecs.open(configfilename, "r", encoding))
 
         #profile mode chosen?
         if options.profiledir:
