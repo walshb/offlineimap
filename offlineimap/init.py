@@ -103,11 +103,10 @@ class OfflineImap:
 
         parser.add_option("-f", dest="folders", metavar="folder1,[folder2...]",
                   help=
-              "Only sync the specified folders. The folder names "
-              "are the *untranslated* foldernames. This "
-              "command-line option overrides any 'folderfilter' "
-              "and 'folderincludes' options in the configuration "
-              "file.")
+              "Only sync the specified folders. The folder names are the "
+              "*untranslated* foldernames of the REMOTE repository. This "
+              "overrides any 'folderfilter' and 'folderincludes' options "
+              "in the configuration file.")
 
         parser.add_option("-k", dest="configoverride",
                   action="append",
@@ -245,21 +244,22 @@ class OfflineImap:
         #custom folder list specified?
         if options.folders:
             foldernames = options.folders.split(",")
-            folderfilter = "lambda f: f in %s" % foldernames
-            folderincludes = "[]"
+            f_filter = "lambda f: f in %s" % foldernames
+            f_includes = "[]"
             for accountname in accounts.getaccountlist(config):
                 account_section = 'Account ' + accountname
-                remote_repo_section = 'Repository ' + \
-                                      config.get(account_section, 'remoterepository')
-                local_repo_section = 'Repository ' + \
-                                     config.get(account_section, 'localrepository')
-                for section in [remote_repo_section, local_repo_section]:
-                    config.set(section, "folderfilter", folderfilter)
-                    config.set(section, "folderincludes", folderincludes)
+                remote_repo_section = 'Repository %s' %\
+                    config.get(account_section, 'remoterepository')
+                local_repo_section = 'Repository %s' %\
+                    config.get(account_section, 'localrepository')
+                config.set(remote_repo_section, "folderfilter", f_filter)
+                config.set(remote_repo_section, "folderincludes", f_includes)
+                config.set(local_repo_section, "folderfilter", 'lambda f: True')
+                config.set(local_repo_section, "folderincludes", '[]')
 
         if options.logfile:
             sys.stderr = self.ui.logfile
-    
+
         socktimeout = config.getdefaultint("general", "socktimeout", 0)
         if socktimeout > 0:
             socket.setdefaulttimeout(socktimeout)
