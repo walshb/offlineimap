@@ -13,6 +13,8 @@ others.
 New Features
 ------------
 
+- Use python3 by default
+
 Changes
 -------
 
