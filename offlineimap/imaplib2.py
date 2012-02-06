@@ -54,12 +54,12 @@ select_module = select
 
 #       Globals
 
-CRLF = '\r\n'
+CRLF = b'\r\n'
 Debug = None                                    # Backward compatibility
 IMAP4_PORT = 143
 IMAP4_SSL_PORT = 993
 
-IDLE_TIMEOUT_RESPONSE = '* IDLE TIMEOUT\r\n'
+IDLE_TIMEOUT_RESPONSE = b'* IDLE TIMEOUT\r\n'
 IDLE_TIMEOUT = 60*29                            # Don't stay in IDLE state longer
 READ_POLL_TIMEOUT = 30                          # Without this timeout interrupted network connections can hang reader
 READ_SIZE = 32768                               # Consume all available in socket
@@ -125,16 +125,16 @@ UID_direct = ('SEARCH', 'SORT', 'THREAD')
 
 def Int2AP(num):
 
-    """string = Int2AP(num)
-    Return 'num' converted to a string using characters from the set 'A'..'P'
+    """bytes = Int2AP(num)
+    Return 'num' converted to 'bytes' using characters from the set 'A'..'P'
     """
 
-    val, a2p = [], 'ABCDEFGHIJKLMNOP'
+    val, a2p = [], b'ABCDEFGHIJKLMNOP'
     num = int(abs(num))
     while num:
         num, mod = divmod(num, 16)
         val.insert(0, a2p[mod])
-    return ''.join(val)
+    return bytes(val)
 
 
 
@@ -277,17 +277,17 @@ class IMAP4(object):
     class readonly(abort): pass     # Mailbox status changed to READ-ONLY
 
 
-    continuation_cre = re.compile(r'\+( (?P<data>.*))?')
-    literal_cre = re.compile(r'.*{(?P<size>\d+)}$')
-    mapCRLF_cre = re.compile(r'\r\n|\r|\n')
+    continuation_cre = re.compile(br'\+( (?P<data>.*))?')
+    literal_cre = re.compile(br'.*{(?P<size>\d+)}$')
+    mapCRLF_cre = re.compile(br'\r\n|\r|\n')
         # Need to quote "atom-specials" :-
         #   "(" / ")" / "{" / SP / 0x00 - 0x1f / 0x7f / "%" / "*" / DQUOTE / "\" / "]"
         # so match not the inverse set
-    mustquote_cre = re.compile(r"[^!#$&'+,./0-9:;<=>?@A-Z\[^_`a-z|}~-]")
-    response_code_cre = re.compile(r'\[(?P<type>[A-Z-]+)( (?P<data>[^\]]*))?\]')
+    mustquote_cre = re.compile(br"[^!#$&'+,./0-9:;<=>?@A-Z\[^_`a-z|}~-]")
+    response_code_cre = re.compile(br'\[(?P<type>[A-Z-]+)( (?P<data>[^\]]*))?\]')
     # sequence_set_cre = re.compile(r"^[0-9]+(:([0-9]+|\*))?(,[0-9]+(:([0-9]+|\*))?)*$")
-    untagged_response_cre = re.compile(r'\* (?P<type>[A-Z-]+)( (?P<data>.*))?')
-    untagged_status_cre = re.compile(r'\* (?P<data>\d+) (?P<type>[A-Z-]+)( (?P<data2>.*))?')
+    untagged_response_cre = re.compile(br'\* (?P<type>[A-Z-]+)( (?P<data>.*))?')
+    untagged_status_cre = re.compile(br'\* (?P<data>\d+) (?P<type>[A-Z-]+)( (?P<data2>.*))?')
 
 
     def __init__(self, host=None, port=None, debug=None, debug_file=None, identifier=None, timeout=None, debug_buf_lvl=None):
@@ -314,7 +314,7 @@ class IMAP4(object):
 
         self.tagnum = 0
         self.tagpre = Int2AP(random.randint(4096, 65535))
-        self.tagre = re.compile(r'(?P<tag>'
+        self.tagre = re.compile(br'(?P<tag>'
                         + self.tagpre
                         + r'\d+) (?P<type>[A-Z]+) (?P<data>.*)')
 
@@ -1675,7 +1675,8 @@ class IMAP4(object):
                 if __debug__: self._log(1, 'inq None - terminating')
                 break
 
-            if not isinstance(line, str):
+            if isinstance(line, tuple):
+                # tuple indicates an exception
                 typ, val = line
                 break
 
@@ -1723,7 +1724,7 @@ class IMAP4(object):
             }
             return ' '.join([PollErrors[s] for s in list(PollErrors.keys()) if (s & state)])
 
-        line_part = ''
+        line_part = b''
 
         poll = select.poll()
 
@@ -1760,13 +1761,13 @@ class IMAP4(object):
                     rxzero = 0
 
                     while True:
-                        stop = data.find('\n', start)
+                        stop = data.find(b'\n', start)
                         if stop < 0:
                             line_part += data[start:]
                             break
                         stop += 1
                         line_part, start, line = \
-                            '', stop, line_part + data[start:stop]
+                            b'', stop, line_part + data[start:stop]
                         if __debug__: self._log(4, '< %s' % line)
                         self.inq.put(line)
                         if self.TerminateReader:
@@ -2201,11 +2202,11 @@ MonthNames = [None, 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 
 Mon2num = dict(list(zip((x.encode() for x in MonthNames[1:]), list(range(1, 13)))))
 
-InternalDate = re.compile(r'.*INTERNALDATE "'
-    r'(?P<day>[ 0123][0-9])-(?P<mon>[A-Z][a-z][a-z])-(?P<year>[0-9][0-9][0-9][0-9])'
-    r' (?P<hour>[0-9][0-9]):(?P<min>[0-9][0-9]):(?P<sec>[0-9][0-9])'
-    r' (?P<zonen>[-+])(?P<zoneh>[0-9][0-9])(?P<zonem>[0-9][0-9])'
-    r'"')
+InternalDate = re.compile(br'.*INTERNALDATE "'
+    br'(?P<day>[ 0123][0-9])-(?P<mon>[A-Z][a-z][a-z])-(?P<year>[0-9][0-9][0-9][0-9])'
+    br' (?P<hour>[0-9][0-9]):(?P<min>[0-9][0-9]):(?P<sec>[0-9][0-9])'
+    br' (?P<zonen>[-+])(?P<zoneh>[0-9][0-9])(?P<zonem>[0-9][0-9])'
+    br'"')
 
 
 def Internaldate2Time(resp):
@@ -2277,7 +2278,7 @@ def Time2Internaldate(date_time):
 
 
 
-FLAGS_cre = re.compile(r'.*FLAGS \((?P<flags>[^\)]*)\)')
+FLAGS_cre = re.compile(br'.*FLAGS \((?P<flags>[^\)]*)\)')
 
 def ParseFlags(resp):
 
