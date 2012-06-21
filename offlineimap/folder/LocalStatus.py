@@ -16,6 +16,7 @@
 #    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
 
 from .Base import BaseFolder
+from offlineimap.error import OfflineImapError
 import os
 import threading
 
@@ -97,8 +98,15 @@ class LocalStatusFolder(BaseFolder):
             if self.doautosave:
                 os.fsync(file.fileno())
             file.close()
-            os.rename(self.filename + ".tmp", self.filename)
+            try:
+                os.rename(self.filename + ".tmp", self.filename)
+            except OSError as e:
+                if errno == 2:
+                    raise OfflineImapError("Renaming temporary status file '%s'"
+                        " failed. Please report this." % (self.filename + ".tmp"),
+                                      OfflineImapError.ERROR.FOLDER)
 
+                else: raise
             if self.doautosave:
                 fd = os.open(os.path.dirname(self.filename), os.O_RDONLY)
                 os.fsync(fd)
