@@ -172,7 +172,7 @@ class IMAPFolder(BaseFolder):
             # Get the flags and UIDs for these. single-quotes prevent
             # imaplib2 from quoting the sequence.
             res_type, response = imapobj.fetch("'%s'" % msgsToFetch,
-                                               '(FLAGS UID)')
+                                               '(FLAGS UID INTERNALDATE)')
             if res_type != 'OK':
                 raise OfflineImapError("FETCHING UIDs in folder [%s]%s failed. "
                                        "Server responded '[%s] %s'" % (
